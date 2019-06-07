@@ -66,6 +66,9 @@ class NYUDepth(Dataset):
             depth = torch.from_numpy(depth).float()
             cloud = torch.from_numpy(cloud).float()
             
+            # depth to (1, H, W)
+            depth = depth[None]
+            
             return image, depth, cloud
     
     def __len__(self):
