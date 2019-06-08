@@ -6,8 +6,8 @@ import scipy
 from scipy import io
 from torch.utils.data import Dataset
 import matplotlib
-matplotlib.use('agg')
-from mpl_toolkits import mplot3d
+# matplotlib.use('agg')
+# from mpl_toolkits import mplot3d
 import matplotlib.pyplot as plt
 from torchvision import transforms
 from skimage import transform as trans
@@ -33,6 +33,8 @@ class NYUDepth(Dataset):
         self.root = root
         self.mat_path = os.path.join(root, 'nyu_depth_v2_labeled.mat')
         self.split_path = os.path.join(root, 'splits.mat')
+        self.normal_dir = os.path.join(root, 'normal')
+        self.conf_dir = os.path.join(root, 'conf')
         splits = io.loadmat(self.split_path)
         self.mode = mode
         if mode == 'train':
@@ -41,36 +43,52 @@ class NYUDepth(Dataset):
             self.indices = splits['testNdxs']
     
     def __getitem__(self, index):
+        # Oh, matlab index starts from 1...
+        pyid = self.indices[index, 0] - 1
+        
+        # load surface normal and confidence
+        normal_path = os.path.join(self.normal_dir, '{:04}.npy'.format(pyid))
+        conf_path = os.path.join(self.conf_dir, '{:04}.npy'.format(pyid))
+        normal = np.load(open(normal_path, 'rb'))
+        conf = np.load(open(conf_path, 'rb'))
+        
+        # load image and depth
         with h5py.File(self.mat_path, 'r') as f:
             images = f['images']
             depths = f['depths']
             # image (3, w, h), uint8
             # depth (w, h) float
-            # Oh, the index starts from 1...
-            image = images[self.indices[index, 0] - 1]
-            depth = depths[self.indices[index, 0] - 1]
-            # transpose to (h, w, 3), (h, w)
-            image = image.transpose(2, 1, 0)
-            depth = depth.transpose(1, 0)
-            # compute point cloud (h, w, 3)
-            cloud = depth_to_points(depth, self.fx_rgb, self.fy_rgb, self.cx_rgb, self.cy_rgb)
-            # to float
-            image = skimage.img_as_float(image)
-            # rescale
-            image = trans.rescale(image, 0.5, mode='constant', multichannel=True)
-            depth = trans.rescale(depth, 0.5, mode='constant', preserve_range=True, multichannel=False)
-            cloud = trans.rescale(cloud, 0.5, mode='constant', preserve_range=True, multichannel=True)
-            # random crop
-            image, depth, cloud = random_crop(image, depth, cloud, size=(228, 304))
-            # to tensor
-            image = torch.from_numpy(image.transpose(2, 0, 1)).float()
-            depth = torch.from_numpy(depth).float()
-            cloud = torch.from_numpy(cloud).float()
+            image = images[pyid]
+            depth = depths[pyid]
             
-            # depth to (1, H, W)
-            depth = depth[None]
-            
-            return image, depth, cloud
+        # transpose to (h, w, 3), (h, w). Don't have to do this for normal and
+        # conf since they have already been transposed
+        image = image.transpose(2, 1, 0)
+        depth = depth.transpose(1, 0)
+        
+        # to float
+        image = skimage.img_as_float(image)
+        
+        # rescale
+        image = trans.rescale(image, 0.5, mode='constant', multichannel=True)
+        depth = trans.rescale(depth, 0.5, mode='constant', preserve_range=True, multichannel=False)
+        conf = trans.rescale(conf, 0.5, mode='constant', preserve_range=True, multichannel=False)
+        normal = trans.rescale(normal, 0.5, mode='constant', preserve_range=True, multichannel=True)
+        
+        # random crop
+        image, depth, conf, normal = random_crop(image, depth, conf, normal, size=(228, 304))
+        
+        # to tensor
+        image = torch.from_numpy(image.transpose(2, 0, 1)).float()
+        depth = torch.from_numpy(depth).float()
+        conf = torch.from_numpy(conf).float()
+        normal = torch.from_numpy(normal.transpose(2, 0, 1)).float()
+        
+        # depth, conf to (1, H, W),
+        depth = depth[None]
+        conf = conf[None]
+        
+        return image, depth, normal, conf
     
     def __len__(self):
         return len(self.indices)
