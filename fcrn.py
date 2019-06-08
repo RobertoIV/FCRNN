@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from resnet import ResnetEncoder
+from utils import vis_logger
+import math
 
 
 class FCRN(nn.Module):
@@ -19,25 +21,44 @@ class FCRN(nn.Module):
 class UpProjDecoder(nn.Module):
     def __init__(self):
         nn.Module.__init__(self)
-        self.conv1 = nn.Conv2d(2048, 1024, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(1024)
-        self.upproj1 = UpProject(1024, 512)
-        self.upproj2 = UpProject(512, 256)
-        self.upproj3 = UpProject(256, 128)
-        self.upproj4 = UpProject(128, 64)
-        self.dropout = nn.Dropout2d()
-        self.pred = nn.Conv2d(64, 1, 3, 1, 1)
+        # resnet 50
+        # self.conv1 = nn.Conv2d(2048, 1024, 1, bias=False)
+        # self.bn1 = nn.BatchNorm2d(1024)
+        # self.upproj1 = UpProject(1024, 512)
+        # self.upproj2 = UpProject(512, 256)
+        # self.upproj3 = UpProject(256, 128)
+        # self.upproj4 = UpProject(128, 64)
+        # self.dropout = nn.Dropout2d()
+        # self.pred = nn.Conv2d(64, 1, 3, 1, 1)
+        
+        # resnet 18
+        self.conv1 = nn.Conv2d(512, 512, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(512)
+        self.upproj1 = UpProject(512, 256)
+        self.upproj2 = UpProject(256, 128)
+        self.upproj3 = UpProject(128, 64)
+        self.upproj4 = UpProject(64, 32)
+        # self.dropout = nn.Dropout2d()
+        self.pred = nn.Conv2d(32, 1, 3, 1, 1)
+        
         self.upsample = nn.Upsample(size=(228, 304), mode='bilinear', align_corners=False)
+        
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
         
     def forward(self, x):
         x = self.bn1(self.conv1(x))
-        x = F.relu(self.upproj1(x))
-        x = F.relu(self.upproj2(x))
-        x = F.relu(self.upproj3(x))
-        x = F.relu(self.upproj4(x))
+        x = self.upproj1(x)
+        x = self.upproj2(x)
+        x = self.upproj3(x)
+        x = self.upproj4(x)
         
-        x = F.relu(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.pred(x)
         x = F.relu(x)
         x = self.upsample(x)
@@ -124,3 +145,5 @@ if __name__ == '__main__':
     x = torch.rand(B, C, H, W)
     a = res(x)
     print(a.size())
+
+

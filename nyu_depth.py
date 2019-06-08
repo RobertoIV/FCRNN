@@ -41,13 +41,14 @@ class NYUDepth(Dataset):
             self.indices = splits['testNdxs']
     
     def __getitem__(self, index):
-        with h5py.File(self.mat_path) as f:
+        with h5py.File(self.mat_path, 'r') as f:
             images = f['images']
             depths = f['depths']
             # image (3, w, h), uint8
             # depth (w, h) float
-            image = images[self.indices[index, 0]]
-            depth = depths[self.indices[index, 0]]
+            # Oh, the index starts from 1...
+            image = images[self.indices[index, 0] - 1]
+            depth = depths[self.indices[index, 0] - 1]
             # transpose to (h, w, 3), (h, w)
             image = image.transpose(2, 1, 0)
             depth = depth.transpose(1, 0)
@@ -56,9 +57,9 @@ class NYUDepth(Dataset):
             # to float
             image = skimage.img_as_float(image)
             # rescale
-            image = trans.rescale(image, 0.5, mode='constant')
-            depth = trans.rescale(depth, 0.5, mode='constant', preserve_range=True)
-            cloud = trans.rescale(cloud, 0.5, mode='constant', preserve_range=True)
+            image = trans.rescale(image, 0.5, mode='constant', multichannel=True)
+            depth = trans.rescale(depth, 0.5, mode='constant', preserve_range=True, multichannel=False)
+            cloud = trans.rescale(cloud, 0.5, mode='constant', preserve_range=True, multichannel=True)
             # random crop
             image, depth, cloud = random_crop(image, depth, cloud, size=(228, 304))
             # to tensor
@@ -86,6 +87,9 @@ def depth_to_points(depths, fx, fy, cx, cy):
     H, W = depths.shape
     # make meshgrid (H, W), (H, W)
     x_grid, y_grid = np.meshgrid(np.arange(W), np.arange(H))
+    # +1 for matlab compabibility.
+    x_grid = x_grid + 1
+    y_grid = y_grid + 1
     # get 3-d point cloud
     X = (x_grid - cx) * depths / fx
     Y = (y_grid - cy) * depths / fy

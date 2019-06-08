@@ -7,7 +7,7 @@ from torch.nn import functional as F
 class ResnetEncoder(nn.Module):
     def __init__(self, download=False):
         nn.Module.__init__(self)
-        resnet50 = torchvision.models.resnet50(download)
+        resnet50 = torchvision.models.resnet18(download)
         # only retain useful modules
         self.conv1 = resnet50.conv1
         self.bn1 = resnet50.bn1

@@ -2,6 +2,26 @@ from collections import defaultdict, deque
 import numpy as np
 import torch
 
+
+class VisLogger:
+    """
+    Global visualization logger
+    """
+    def __init__(self):
+        self.images = {}
+        
+    def update(self, **kargs):
+        for key, value in kargs.items():
+            self.images[key] = value
+            
+    def get_data_for_tensorboard(self):
+        """
+        Process data and return a dictionary
+        """
+        return self.images
+    
+vis_logger = VisLogger()
+
 class SmoothedValue:
     def __init__(self, maxsize=20):
         self.values = deque(maxlen=maxsize)
