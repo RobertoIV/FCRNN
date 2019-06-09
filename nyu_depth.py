@@ -27,7 +27,18 @@ class NYUDepth(Dataset):
     fy_rgb = 5.1946961112127485e+02
     cx_rgb = 3.2558244941119034e+02
     cy_rgb = 2.5373616633400465e+02
-    
+    # mask = np.zeros((480, 640), dtype=np.bool)
+    # mask[44:471, 40:601] = True
+    top = 44
+    bottom = 471
+    left = 40
+    right = 601
+    size = (427, 561)
+    pad_top = 44
+    pad_bottom = 9
+    pad_left = 40
+    pad_right = 39
+
     def __init__(self, root, mode):
         assert mode in ['train', 'test'], 'invalid dataset mode'
         self.root = root
@@ -65,6 +76,7 @@ class NYUDepth(Dataset):
         # conf since they have already been transposed
         image = image.transpose(2, 1, 0)
         depth = depth.transpose(1, 0)
+        cloud = self.depth_to_cloud(depth)
         
         # to float
         image = skimage.img_as_float(image)
@@ -74,24 +86,47 @@ class NYUDepth(Dataset):
         depth = trans.rescale(depth, 0.5, mode='constant', preserve_range=True, multichannel=False)
         conf = trans.rescale(conf, 0.5, mode='constant', preserve_range=True, multichannel=False)
         normal = trans.rescale(normal, 0.5, mode='constant', preserve_range=True, multichannel=True)
+        cloud = trans.rescale(cloud, 0.5, mode='constant', preserve_range=True, multichannel=True)
         
         # random crop
-        image, depth, conf, normal = random_crop(image, depth, conf, normal, size=(228, 304))
+        image, depth, conf, normal, cloud = random_crop(image, depth, conf, normal, cloud, size=(228, 304))
         
         # to tensor
         image = torch.from_numpy(image.transpose(2, 0, 1)).float()
         depth = torch.from_numpy(depth).float()
         conf = torch.from_numpy(conf).float()
         normal = torch.from_numpy(normal.transpose(2, 0, 1)).float()
+        cloud = torch.from_numpy(cloud.transpose(2, 0, 1)).float()
         
         # depth, conf to (1, H, W),
         depth = depth[None]
         conf = conf[None]
         
-        return image, depth, normal, conf
+        return image, depth, normal, conf, cloud
     
     def __len__(self):
         return len(self.indices)
+    
+    @staticmethod
+    def crop(img):
+        return img[NYUDepth.top:NYUDepth.bottom, NYUDepth.left:NYUDepth.right]
+        
+    @staticmethod
+    def pad(img):
+        this = NYUDepth
+        if len(img.shape) == 3:
+            pad_width = ((this.pad_top, this.pad_bottom), (this.pad_left, this.pad_right), (0, 0))
+        else:
+            pad_width = ((this.pad_top, this.pad_bottom), (this.pad_left, this.pad_right))
+        img = np.pad(img, pad_width, mode='constant')
+        return img
+    
+    @staticmethod
+    def depth_to_cloud(depth):
+        depth = NYUDepth.crop(depth)
+        cloud = depth_to_points(depth, NYUDepth.fx_rgb, NYUDepth.fy_rgb, NYUDepth.cx_rgb, NYUDepth.cy_rgb)
+        cloud = NYUDepth.pad(cloud)
+        return cloud
 
 
 def depth_to_points(depths, fx, fy, cx, cy):

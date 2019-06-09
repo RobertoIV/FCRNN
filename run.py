@@ -2,6 +2,7 @@ import os, sys
 import shutil
 from torch.utils.data import DataLoader
 from torch import nn, optim
+from torch.nn import functional as F
 from fcrn import FCRN
 import torch
 from utils import MetricLogger
@@ -29,7 +30,7 @@ def validate(dataloader, model, device, tb, epoch, tag):
         
         for i, data in tqdm(enumerate(dataloader), total=len(dataloader)):
             data = [x.to(device) for x in data]
-            image, depth_batch, cloud = data
+            image, depth_batch, normal, conf, cloud = data
             pred_batch = model(image)
             
             B = pred_batch.size(0)
@@ -90,7 +91,8 @@ def main():
     epochs = 1000
     device = torch.device('cuda:3')
     print_every = 5
-    exp_name = 'resnet18_nodropout_new'
+    # exp_name = 'resnet18_nodropout_new'
+    exp_name = 'consistency_hard_normal'
     lr = 1e-5
     weight_decay = 0.0005
     log_dir = os.path.join('logs', exp_name)
@@ -140,20 +142,77 @@ def main():
     
     start_epoch = 0
     if resume:
-        print('Loading checkpoint from {}...'.format(os.path.join(model_dir, 'model.pth')))
-        # load model and optimizer
-        checkpoint = torch.load(os.path.join(model_dir, 'model.pth'))
-        model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        start_epoch = checkpoint['epoch']
-        print('Model loaded.')
+        model_path = os.path.join(model_dir, 'model.pth')
+        if os.path.exists(model_path):
+            print('Loading checkpoint from {}...'.format(model_path))
+            # load model and optimizer
+            checkpoint = torch.load(os.path.join(model_dir, 'model.pth'))
+            model.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            start_epoch = checkpoint['epoch']
+            print('Model loaded.')
+        else:
+            print('No checkpoint found. Train from scratch')
     
-    criterion = nn.MSELoss()
     # training
     metric_logger = MetricLogger()
     
     end = time.perf_counter()
     max_iters = epochs * len(dataloader)
+    
+    def normal_loss(pred, normal, conf):
+        """
+        :param pred: (B, 3, H, W)
+        :param normal: (B, 3, H, W)
+        :param conf: 1
+        """
+        dot_prod = (pred * normal).sum(dim=1)
+        # weighted loss, (B, )
+        batch_loss = ((1 - dot_prod) * conf[:, 0]).sum(1).sum(1)
+        # normalize, to (B, )
+        batch_loss /= conf[:, 0].sum(1).sum(1)
+        return batch_loss.mean()
+
+    def consistency_loss(pred, cloud, normal, conf):
+        """
+        :param pred: (B, 1, H, W)
+        :param normal: (B, 3, H, W)
+        :param cloud: (B, 3, H, W)
+        :param conf: (B, 1, H, W)
+        """
+        B, _, _, _ = normal.size()
+        
+        cloud = cloud.clone()
+        cloud[:, 2:3, :, :] = pred
+        # algorithm: use a kernel
+        kernel = torch.ones((1, 1, 7, 7), device=pred.device)
+        kernel = -kernel
+        kernel[0, 0, 3, 3] = 48
+    
+        cloud_0 = cloud[:, 0:1]
+        cloud_1 = cloud[:, 1:2]
+        cloud_2 = cloud[:, 2:3]
+        diff_0 = F.conv2d(cloud_0, kernel, padding=6, dilation=2)
+        diff_1 = F.conv2d(cloud_1, kernel, padding=6, dilation=2)
+        diff_2 = F.conv2d(cloud_2, kernel, padding=6, dilation=2)
+        # (B, 3, H, W)
+        diff = torch.cat((diff_0, diff_1, diff_2), dim=1)
+        # normalize
+        diff = F.normalize(diff, dim=1)
+        # (B, 1, H, W)
+        dot_prod = (diff * normal).sum(dim=1, keepdim=True)
+        # weighted mean over image
+        dot_prod = torch.abs(dot_prod.view(B, -1))
+        conf = conf.view(B, -1)
+        loss = (dot_prod * conf).sum(1) / conf.sum(1)
+        # mean over batch
+        return loss.mean()
+    
+    def criterion(pred, depth, normal, cloud, conf):
+        mseloss = F.mse_loss(pred, depth)
+        consis_loss = consistency_loss(pred, cloud, normal, conf)
+        
+        return mseloss, consis_loss
     
     print('Start training')
     for epoch in range(start_epoch, epochs):
@@ -163,9 +222,10 @@ def main():
             start = end
             i += 1
             data = [x.to(device) for x in data]
-            image, depth, cloud = data
+            image, depth, normal, conf, cloud = data
             pred = model(image)
-            loss = criterion(pred, depth)
+            mse_loss, consis_loss = criterion(pred, depth, normal, cloud, conf)
+            loss = mse_loss + consis_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -173,6 +233,8 @@ def main():
             # bookkeeping
             end = time.perf_counter()
             metric_logger.update(loss=loss.item())
+            metric_logger.update(mse_loss=mse_loss.item())
+            metric_logger.update(consis_loss=consis_loss.item())
             metric_logger.update(batch_time=end-start)
 
             
@@ -203,10 +265,19 @@ def main():
                 max_depth = depth[0].max() * 1.25
                 depth = (depth[0] - min_depth) / (max_depth - min_depth)
                 pred = (pred[0] - min_depth) / (max_depth - min_depth)
-                pred = torch.clamp(pred, min=0.0, max=1.0)
-                tb.add_scalar('train/loss', loss.item(), global_step)
+                # pred = torch.clamp(pred, min=0.0, max=1.0)
+                normal = (normal[0] + 1) / 2
+                # pred = (pred[0] + 1) / 2
+                conf = conf[0]
+                
+                tb.add_scalar('train/loss', metric_logger['loss'].median, global_step)
+                tb.add_scalar('train/mse_loss', metric_logger['mse_loss'].median, global_step)
+                tb.add_scalar('train/consis_loss', metric_logger['consis_loss'].median, global_step)
+                
                 tb.add_image('train/depth', depth, global_step)
+                tb.add_image('train/normal', normal, global_step)
                 tb.add_image('train/pred', pred, global_step)
+                tb.add_image('train/conf', conf, global_step)
                 tb.add_image('train/image', image[0], global_step)
                 
         if (epoch) % val_every == 0:
