@@ -40,7 +40,7 @@ class UpProjDecoder(nn.Module):
         self.upproj4 = UpProject(64, 32)
         # self.dropout = nn.Dropout2d()
         self.pred = nn.Conv2d(32, 1, 3, 1, 1)
-        # self.normal_pred = nn.Conv2d(32, 3, 3, 1, 1)
+        self.normal_pred = nn.Conv2d(32, 3, 3, 1, 1)
         
         
         self.upsample = nn.Upsample(size=(228, 304), mode='bilinear', align_corners=False)
@@ -61,15 +61,19 @@ class UpProjDecoder(nn.Module):
         x = self.upproj4(x)
         
         # x = self.dropout(x)
-        x = self.pred(x)
-        x = F.relu(x)
-        # x = self.normal_pred(x)
-        x = self.upsample(x)
+        # depth prediction
+        x1 = x
+        x1 = self.pred(x1)
+        x1 = F.relu(x1)
+        x1 = self.upsample(x1)
+
+        # surface normal prediction
+        x2 = x
+        x2 = self.normal_pred(x2)
+        x2 = F.normalize(x2, dim=1)
+        x2 = self.upsample(x2)
         
-        # normalize
-        # x = F.normalize(x, dim=1)
-        
-        return x
+        return x1, x2
     
     
 class UpConv(nn.Module):

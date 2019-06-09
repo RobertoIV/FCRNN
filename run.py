@@ -30,13 +30,13 @@ def validate(dataloader, model, device, tb, epoch, tag):
         
         for i, data in tqdm(enumerate(dataloader), total=len(dataloader)):
             data = [x.to(device) for x in data]
-            image, depth_batch, normal, conf, cloud = data
-            pred_batch = model(image)
+            image, depth_batch, normal_batch, conf_batch, cloud = data
+            depth_pred_batch, normal_pred_batch = model(image)
             
-            B = pred_batch.size(0)
+            B = depth_pred_batch.size(0)
             count += B
             for i in range(B):
-                pred = pred_batch[i]
+                pred = depth_pred_batch[i]
                 depth = depth_batch[i]
                 # only keep non-zero ones
                 mask = depth > 1e-5
@@ -68,11 +68,19 @@ def validate(dataloader, model, device, tb, epoch, tag):
         min_depth = depth_batch[0].min()
         max_depth = depth_batch[0].max() * 1.25
         depth = (depth_batch[0] - min_depth) / (max_depth - min_depth)
-        pred = (pred_batch[0] - min_depth) / (max_depth - min_depth)
-        pred = torch.clamp(pred, min=0.0, max=1.0)
+        depth_pred = (depth_pred_batch[0] - min_depth) / (max_depth - min_depth)
+        depth_pred = torch.clamp(depth_pred, min=0.0, max=1.0)
+        normal = (normal_batch[0] + 1) / 2.0
+        normal_pred = normal_pred_batch[0]
+        normal_pred = (normal_pred + 1) / 2.0
+        conf = conf_batch[0]
+        
         tb.add_image('test/image', image[0], epoch)
         tb.add_image('test/depth', depth, epoch)
-        tb.add_image('test/pred', pred, epoch)
+        tb.add_image('test/depth_pred', depth_pred, epoch)
+        tb.add_image('test/normal', normal, epoch)
+        tb.add_image('test/normal_pred', normal_pred, epoch)
+        tb.add_image('test/conf', conf, epoch)
     
     tb.add_scalar('thres_1.25/' + tag, ratio_one, epoch)
     tb.add_scalar('thres_1.25_2/' + tag, ratio_two, epoch)
@@ -89,10 +97,10 @@ def main():
     path = 'data/NYU_DEPTH'
     batch_size = 32
     epochs = 1000
-    device = torch.device('cuda:3')
+    device = torch.device('cuda:2')
     print_every = 5
     # exp_name = 'resnet18_nodropout_new'
-    exp_name = 'consistency_hard_normal'
+    exp_name = 'consistency_soft_normal'
     lr = 1e-5
     weight_decay = 0.0005
     log_dir = os.path.join('logs', exp_name)
@@ -208,11 +216,12 @@ def main():
         # mean over batch
         return loss.mean()
     
-    def criterion(pred, depth, normal, cloud, conf):
-        mseloss = F.mse_loss(pred, depth)
-        consis_loss = consistency_loss(pred, cloud, normal, conf)
+    def criterion(depth_pred, normal_pred, depth, normal, cloud, conf):
+        mse_loss = F.mse_loss(depth_pred, depth)
+        consis_loss = consistency_loss(depth_pred, cloud, normal_pred, conf)
+        norm_loss = normal_loss(normal_pred, normal, conf)
         
-        return mseloss, consis_loss
+        return mse_loss, consis_loss, norm_loss
     
     print('Start training')
     for epoch in range(start_epoch, epochs):
@@ -223,9 +232,9 @@ def main():
             i += 1
             data = [x.to(device) for x in data]
             image, depth, normal, conf, cloud = data
-            pred = model(image)
-            mse_loss, consis_loss = criterion(pred, depth, normal, cloud, conf)
-            loss = mse_loss + consis_loss
+            depth_pred, normal_pred = model(image)
+            mse_loss, consis_loss, norm_loss = criterion(depth_pred, normal_pred, depth, normal, cloud, conf)
+            loss = mse_loss + consis_loss + norm_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -234,6 +243,7 @@ def main():
             end = time.perf_counter()
             metric_logger.update(loss=loss.item())
             metric_logger.update(mse_loss=mse_loss.item())
+            metric_logger.update(norm_loss=norm_loss.item())
             metric_logger.update(consis_loss=consis_loss.item())
             metric_logger.update(batch_time=end-start)
 
@@ -264,19 +274,21 @@ def main():
                 min_depth = depth[0].min()
                 max_depth = depth[0].max() * 1.25
                 depth = (depth[0] - min_depth) / (max_depth - min_depth)
-                pred = (pred[0] - min_depth) / (max_depth - min_depth)
-                # pred = torch.clamp(pred, min=0.0, max=1.0)
+                depth_pred = (depth_pred[0] - min_depth) / (max_depth - min_depth)
+                depth_pred = torch.clamp(depth_pred, min=0.0, max=1.0)
                 normal = (normal[0] + 1) / 2
-                # pred = (pred[0] + 1) / 2
+                normal_pred = (normal_pred[0] + 1) / 2
                 conf = conf[0]
                 
                 tb.add_scalar('train/loss', metric_logger['loss'].median, global_step)
                 tb.add_scalar('train/mse_loss', metric_logger['mse_loss'].median, global_step)
                 tb.add_scalar('train/consis_loss', metric_logger['consis_loss'].median, global_step)
+                tb.add_scalar('train/norm_loss', metric_logger['norm_loss'].median, global_step)
                 
                 tb.add_image('train/depth', depth, global_step)
                 tb.add_image('train/normal', normal, global_step)
-                tb.add_image('train/pred', pred, global_step)
+                tb.add_image('train/depth_pred', depth_pred, global_step)
+                tb.add_image('train/normal_pred', normal_pred, global_step)
                 tb.add_image('train/conf', conf, global_step)
                 tb.add_image('train/image', image[0], global_step)
                 
