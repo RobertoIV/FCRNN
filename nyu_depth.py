@@ -89,7 +89,8 @@ class NYUDepth(Dataset):
         cloud = trans.rescale(cloud, 0.5, mode='constant', preserve_range=True, multichannel=True)
         
         # random crop
-        image, depth, conf, normal, cloud = random_crop(image, depth, conf, normal, cloud, size=(228, 304))
+        # image, depth, conf, normal, cloud = random_crop(image, depth, conf, normal, cloud, size=(228, 304))
+        image, depth, conf, normal, cloud = random_crop(image, depth, conf, normal, cloud, size=(224, 320))
         
         # to tensor
         image = torch.from_numpy(image.transpose(2, 0, 1)).float()

@@ -12,11 +12,70 @@ class FCRN(nn.Module):
         self.encoder = ResnetEncoder(init)
         self.decoder = UpProjDecoder()
         
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
+        # encoder modules
+        self.conv1 = self.encoder.conv1
+        self.bn1 = self.encoder.bn1
+        self.relu = self.encoder.relu
+        self.maxpool = self.encoder.maxpool
+        self.layer1 = self.encoder.layer1
+        self.layer2 = self.encoder.layer2
+        self.layer3 = self.encoder.layer3
+        self.layer4 = self.encoder.layer4
         
-        return x
+        # decoder modules
+        self.conv = self.decoder.conv
+        self.bn = self.decoder.bn
+        self.upproj1 = self.decoder.upproj1
+        self.upproj2 = self.decoder.upproj2
+        self.upproj3 = self.decoder.upproj3
+        self.upproj4 = self.decoder.upproj4
+        
+        # self.dropout = nn.Dropout2d()
+        self.upsample = self.decoder.upsample
+        self.pred = self.decoder.pred
+        self.normal_pred = self.decoder.normal_pred
+
+
+        
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        # at this point, 1/4 resolution
+    
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+        # at this point 1/32 resolution, 2048
+
+        x = self.bn(self.conv(c4))
+        
+        
+        x = torch.cat((c4, x), dim=1)
+        x = self.upproj1(x)
+        x = torch.cat((c3, x), dim=1)
+        x = self.upproj2(x)
+        x = torch.cat((c2, x), dim=1)
+        x = self.upproj3(x)
+        x = torch.cat((c1, x), dim=1)
+        x = self.upproj4(x)
+
+        # x = self.dropout(x)
+        # depth prediction
+        x1 = x
+        x1 = self.pred(x1)
+        x1 = F.relu(x1)
+        x1 = self.upsample(x1)
+
+        # surface normal prediction
+        x2 = x
+        x2 = self.normal_pred(x2)
+        x2 = F.normalize(x2, dim=1)
+        x2 = self.upsample(x2)
+
+        return x1, x2
     
 class UpProjDecoder(nn.Module):
     def __init__(self):
@@ -32,18 +91,22 @@ class UpProjDecoder(nn.Module):
         # self.pred = nn.Conv2d(64, 1, 3, 1, 1)
         
         # resnet 18
-        self.conv1 = nn.Conv2d(512, 512, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(512)
-        self.upproj1 = UpProject(512, 256)
-        self.upproj2 = UpProject(256, 128)
-        self.upproj3 = UpProject(128, 64)
-        self.upproj4 = UpProject(64, 32)
+        self.conv = nn.Conv2d(512, 512, 1, bias=False)
+        self.bn = nn.BatchNorm2d(512)
+        # self.upproj1 = UpProject(512, 256)
+        # self.upproj2 = UpProject(256, 128)
+        # self.upproj3 = UpProject(128, 64)
+        # self.upproj4 = UpProject(64, 32)
+        self.upproj1 = UpProject(1024, 256)
+        self.upproj2 = UpProject(512, 128)
+        self.upproj3 = UpProject(256, 64)
+        self.upproj4 = UpProject(128, 32)
         # self.dropout = nn.Dropout2d()
         self.pred = nn.Conv2d(32, 1, 3, 1, 1)
         self.normal_pred = nn.Conv2d(32, 3, 3, 1, 1)
         
         
-        self.upsample = nn.Upsample(size=(228, 304), mode='bilinear', align_corners=False)
+        self.upsample = nn.Upsample(size=(224, 320), mode='bilinear', align_corners=False)
         
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -54,7 +117,7 @@ class UpProjDecoder(nn.Module):
                 m.bias.data.zero_()
         
     def forward(self, x):
-        x = self.bn1(self.conv1(x))
+        x = self.bn(self.conv(x))
         x = self.upproj1(x)
         x = self.upproj2(x)
         x = self.upproj3(x)
