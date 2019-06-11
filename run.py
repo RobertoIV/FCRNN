@@ -95,12 +95,14 @@ def main():
 
     resume = True
     path = 'data/NYU_DEPTH'
-    batch_size = 32
-    epochs = 1000
-    device = torch.device('cuda:2')
+    batch_size = 16
+    epochs = 10000
+    device = torch.device('cuda:0')
     print_every = 5
     # exp_name = 'resnet18_nodropout_new'
-    exp_name = 'consistency_soft_normal'
+    exp_name = 'depth_only_new'
+    # exp_name = 'normal_only'
+    # exp_name = 'sep'
     lr = 1e-5
     weight_decay = 0.0005
     log_dir = os.path.join('logs', exp_name)
@@ -189,7 +191,7 @@ def main():
         :param conf: (B, 1, H, W)
         """
         B, _, _, _ = normal.size()
-        
+        normal = normal.detach()
         cloud = cloud.clone()
         cloud[:, 2:3, :, :] = pred
         # algorithm: use a kernel
@@ -220,8 +222,11 @@ def main():
         mse_loss = F.mse_loss(depth_pred, depth)
         consis_loss = consistency_loss(depth_pred, cloud, normal_pred, conf)
         norm_loss = normal_loss(normal_pred, normal, conf)
+        consis_loss = torch.zeros_like(norm_loss)
         
-        return mse_loss, consis_loss, norm_loss
+        return mse_loss, mse_loss, mse_loss
+        # return mse_loss, consis_loss, norm_loss
+        # return norm_loss, norm_loss, norm_loss
     
     print('Start training')
     for epoch in range(start_epoch, epochs):
