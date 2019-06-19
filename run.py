@@ -100,7 +100,7 @@ def main():
     device = torch.device('cuda:0')
     print_every = 5
     # exp_name = 'resnet18_nodropout_new'
-    exp_name = 'combine'
+    exp_name = 'combine_4'
     # exp_name = 'normal_only'
     # exp_name = 'sep'
     lr = 1e-5
@@ -297,11 +297,11 @@ def main():
                 tb.add_image('train/conf', conf, global_step)
                 tb.add_image('train/image', image[0], global_step)
                 
-        if (epoch) % val_every == 0:
+        if (epoch) % val_every == 0 and epoch != 0:
             # validate after each epoch
             validate(dataloader, model, device, tb, epoch, 'train')
             validate(dataloader_test, model, device, tb, epoch, 'test')
-        if (epoch) % save_every == 0:
+        if (epoch) % save_every == 0 and epoch != 0:
             to_save = {
                 'optimizer': optimizer.state_dict(),
                 'model': model.state_dict(),
