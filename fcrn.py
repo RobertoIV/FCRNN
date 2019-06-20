@@ -59,6 +59,7 @@ class FCRN(nn.Module):
         x = self.upproj2(x)
         x = torch.cat((c2, x), dim=1)
         x = self.upproj3(x)
+        u3 = x
         x = torch.cat((c1, x), dim=1)
         x = self.upproj4(x)
 
@@ -70,10 +71,11 @@ class FCRN(nn.Module):
         x1 = self.upsample(x1)
 
         # surface normal prediction
-        x2 = x
-        x2 = self.normal_pred(x2)
-        x2 = F.normalize(x2, dim=1)
+        # take the last three channels
+        x2 = u3[:, -3:]
+        # x2 = self.normal_pred(x2)
         x2 = self.upsample(x2)
+        x2 = F.normalize(x2, dim=1)
 
         return x1, x2
     

@@ -100,8 +100,8 @@ def main():
     device = torch.device('cuda:0')
     print_every = 5
     # exp_name = 'resnet18_nodropout_new'
-    exp_name = 'combine_4'
-    # exp_name = 'normal_only'
+    exp_name = 'only_depth'
+    # exp_name = 'normal_internel'
     # exp_name = 'sep'
     lr = 1e-5
     weight_decay = 0.0005
