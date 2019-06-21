@@ -156,7 +156,7 @@ def main():
         if os.path.exists(model_path):
             print('Loading checkpoint from {}...'.format(model_path))
             # load model and optimizer
-            checkpoint = torch.load(os.path.join(model_dir, 'model.pth'))
+            checkpoint = torch.load(os.path.join(model_dir, 'model.pth'), map_location='cpu')
             model.load_state_dict(checkpoint['model'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             start_epoch = checkpoint['epoch']
