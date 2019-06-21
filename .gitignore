@@ -1,4 +1,5 @@
 .idea
 .ipy*
 __pycache__
-/data
+/data/*
+!/data/demo
